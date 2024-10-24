@@ -16,7 +16,7 @@
 #' @param debug Logical, if TRUE, print debug messages. Default is FALSE.
 #' @return A list containing the number of inclusion and exclusion criteria, first criteria of each, and output file location.
 #' @export
-#' @importFrom dplyr mutate select bind_rows group_by ungroup
+#' @importFrom dplyr mutate select bind_rows group_by ungroup last
 #' @importFrom stringr str_split str_extract str_replace_all str_trim str_locate_all str_sub str_locate fixed str_detect str_replace
 #' @importFrom openxlsx write.xlsx createWorkbook addWorksheet writeData setColWidths createStyle addStyle saveWorkbook
 #' @importFrom pdftools pdf_text
@@ -37,14 +37,16 @@ create_ti_domain <- function(study_id, method, pdf_path = NULL, nct_id = NULL,
   if (method == "pdf") {
     if(debug) cat("Processing PDF method\n")
     result <- process_pdf_method(study_id, pdf_path, incl_range, excl_range, incl_section, excl_section, end_section, debug)
+    pdf_text <- pdftools::pdf_text(pdf_path)
   } else if (method == "api") {
     if(debug) cat("Processing API method\n")
     result <- process_api_method(study_id, nct_id, debug)
+    pdf_text <- NULL
   }
   
   # Generate TI domain data frame
   if(debug) cat("Generating TI domain data frame\n")
-  ti_domain <- generate_ti_domain(study_id, result$inclusion, result$exclusion, debug)
+  ti_domain <- generate_ti_domain(study_id, result$inclusion, result$exclusion, pdf_text, debug)
   
   # Save to Excel
   if(debug) cat("Saving to Excel\n")
@@ -59,6 +61,43 @@ create_ti_domain <- function(study_id, method, pdf_path = NULL, nct_id = NULL,
   
   # Return summary
   return(summary)
+}
+
+#' Extract Version Information
+#'
+#' This function extracts version information from the PDF text.
+#'
+#' @param text A character string containing the PDF text.
+#' @param debug Logical, if TRUE, print debug messages.
+#' @return A character string representing the version, or NA if not found.
+#' @keywords internal
+extract_version <- function(text, debug = FALSE) {
+  if(debug) cat("Entering extract_version function\n")
+  
+  # Define patterns to match various version formats
+  patterns <- c(
+    "Protocol\\s+\\w+,\\s*(Version\\s*\\d+(\\.\\d+)*)",
+    "(Version\\s*\\d+(\\.\\d+)*)",
+    "(V\\s*\\d+(\\.\\d+)*)"
+  )
+  
+  # Join all lines of text
+  full_text <- paste(text, collapse = " ")
+  
+  for (pattern in patterns) {
+    match <- stringr::str_match(full_text, pattern)
+    if (!is.na(match[1,2])) {
+      version <- match[1,2]
+      # Remove "Version" or "V" prefix and any leading/trailing whitespace
+      version <- gsub("^(Version|V)\\s*", "", version)
+      version <- trimws(version)
+      if(debug) cat("Version found:", version, "\n")
+      return(version)
+    }
+  }
+  
+  if(debug) cat("No version information found\n")
+  return(NA)
 }
 
 #' Validate Input Parameters
@@ -425,7 +464,7 @@ handle_text_length <- function(text, max_length = 200) {
     truncated_text <- stringr::str_sub(text, 1, max_length - suffix_length - 1)
     last_space <- stringr::str_locate_all(truncated_text, " ")[[1]]
     if (!is.null(last_space) && nrow(last_space) > 0) {
-      last_space_position <- last(last_space[, 1])
+      last_space_position <- last_space[nrow(last_space), 1]
       text <- stringr::str_sub(truncated_text, 1, last_space_position - 1)
     }
     text <- paste0(text, " ", suffix)
@@ -443,6 +482,8 @@ handle_text_length <- function(text, max_length = 200) {
 #' @return A cleaned and potentially truncated character string.
 #' @keywords internal
 clean_criterion_text <- function(text, max_length = 200, debug = FALSE) {
+  text <- gsub("^\\s*(\\d+\\.?|[a-z]\\.?|\\*|\\-|•)\\s*", "", text)
+
   # Remove any leading/trailing whitespace
   text <- trimws(text)
   
@@ -452,8 +493,9 @@ clean_criterion_text <- function(text, max_length = 200, debug = FALSE) {
   # Truncate if necessary
   if (nchar(text) > max_length) {
     if(debug) cat("Cleaning and truncating criterion\n")
-    truncated <- substr(text, 1, max_length - 3)
-    text <- paste0(truncated, "...")
+    suffix <- " As Per Protocol"
+    truncated <- substr(text, 1, max_length - nchar(suffix))
+    text <- paste0(truncated, suffix)
     if(debug) cat(sprintf("Final criterion length: %d characters\n", nchar(text)))
   }
   
@@ -657,16 +699,14 @@ separate_criteria <- function(eligibility_text, debug = TRUE) {
   lines <- unlist(strsplit(eligibility_text, "\n"))
   lines <- trimws(lines)
   
-  if(debug) {
-    cat("First few lines of eligibility text:\n")
-    print(head(lines))
-  }
-  
   # Initialize variables
-  inclusion <- list()
-  exclusion <- list()
+  inclusion <- character()
+  exclusion <- character()
   current_list <- NULL
   current_criterion <- NULL
+  
+  # Regular expression to match various list formats
+  list_pattern <- "^\\s*(\\d+\\.?|[a-z]\\.?|\\*|\\-|•)\\s*"
   
   for(i in seq_along(lines)) {
     line <- lines[i]
@@ -679,43 +719,40 @@ separate_criteria <- function(eligibility_text, debug = TRUE) {
       current_list <- "exclusion"
       if(debug) cat("Switched to exclusion criteria\n")
     } else if(!is.null(current_list) && nchar(line) > 0) {
-      if(grepl("^\\d+\\.", line)) {
-        # This is a new main criterion
+      # Remove any list markers at the beginning of the line
+      clean_line <- gsub(list_pattern, "", line)
+      
+      if(grepl(list_pattern, line) || is.null(current_criterion)) {
+        # This is a new criterion
         if(!is.null(current_criterion)) {
-          processed_criterion <- list(
-            text = process_criterion_text(current_criterion$text),
-            subsection = current_criterion$subsection
-          )
           if(current_list == "inclusion") {
-            inclusion <- c(inclusion, list(processed_criterion))
+            inclusion <- c(inclusion, current_criterion)
           } else {
-            exclusion <- c(exclusion, list(processed_criterion))
+            exclusion <- c(exclusion, current_criterion)
           }
         }
-        current_criterion <- list(text = sub("^\\d+\\.\\s*", "", line), subsection = NULL)
-        if(debug) cat("New main criterion added:", current_criterion$text, "\n")
+        current_criterion <- clean_line
+        if(debug) cat("New criterion added:", current_criterion, "\n")
       } else {
         # This is a continuation of the previous criterion
-        if(!is.null(current_criterion)) {
-          current_criterion$text <- paste(current_criterion$text, line)
-          if(debug) cat("Appended to previous criterion:", line, "\n")
-        }
+        current_criterion <- paste(current_criterion, clean_line)
+        if(debug) cat("Appended to previous criterion:", clean_line, "\n")
       }
     }
   }
   
   # Add the last criterion
   if(!is.null(current_criterion)) {
-    processed_criterion <- list(
-      text = process_criterion_text(current_criterion$text),
-      subsection = current_criterion$subsection
-    )
     if(current_list == "inclusion") {
-      inclusion <- c(inclusion, list(processed_criterion))
+      inclusion <- c(inclusion, current_criterion)
     } else {
-      exclusion <- c(exclusion, list(processed_criterion))
+      exclusion <- c(exclusion, current_criterion)
     }
   }
+  
+  # Clean up criteria
+  inclusion <- sapply(inclusion, clean_criterion_text)
+  exclusion <- sapply(exclusion, clean_criterion_text)
   
   if(debug) {
     cat(sprintf("Separated %d inclusion criteria\n", length(inclusion)))
@@ -726,6 +763,7 @@ separate_criteria <- function(eligibility_text, debug = TRUE) {
   
   return(list(inclusion = inclusion, exclusion = exclusion))
 }
+
 
 #' Clean Criteria List
 #'
@@ -784,9 +822,30 @@ clean_criteria_list <- function(criteria_list, debug = FALSE) {
 #' @return A data frame representing the TI domain.
 #' @importFrom dplyr mutate
 #' @keywords internal
-generate_ti_domain <- function(study_id, inclusion_criteria, exclusion_criteria, debug = FALSE) {
+generate_ti_domain <- function(study_id, inclusion_criteria, exclusion_criteria, pdf_text = NULL, debug = FALSE) {
   if(debug) cat("Entering generate_ti_domain function\n")
   
+  # Extract version information if pdf_text is provided
+  tivers <- if (!is.null(pdf_text)) extract_version(pdf_text, debug) else NA
+  
+  # Debug: Print the lengths of inclusion and exclusion criteria
+  if(debug) {
+    cat("Number of inclusion criteria:", length(inclusion_criteria), "\n")
+    cat("Number of exclusion criteria:", length(exclusion_criteria), "\n")
+    cat("TIVERS:", tivers, "\n")
+    
+    # Print the structure of the first inclusion and exclusion criteria
+    if(length(inclusion_criteria) > 0) {
+      cat("Structure of first inclusion criterion:\n")
+      print(str(inclusion_criteria[[1]]))
+    }
+    if(length(exclusion_criteria) > 0) {
+      cat("Structure of first exclusion criterion:\n")
+      print(str(exclusion_criteria[[1]]))
+    }
+  }
+  
+  # Create empty data frame
   ti_domain <- data.frame(
     STUDYID = character(),
     DOMAIN = character(),
@@ -794,38 +853,39 @@ generate_ti_domain <- function(study_id, inclusion_criteria, exclusion_criteria,
     IETEST = character(),
     IECAT = character(),
     IESCAT = character(),
-    IEORRES = character(),
+    TIRL = character(),
+    TIVERS = character(),
     stringsAsFactors = FALSE
   )
   
+  # Add inclusion criteria
   for (i in seq_along(inclusion_criteria)) {
-    iescat <- if(!is.null(inclusion_criteria[[i]]$subsection)) inclusion_criteria[[i]]$subsection else ""
-    iecat <- if(iescat != "") "Inclusion" else ""
-    
+    criterion <- inclusion_criteria[[i]]
     ti_domain <- rbind(ti_domain, data.frame(
       STUDYID = study_id,
       DOMAIN = "TI",
-      IETESTCD = paste0("INCL", sprintf("%03d", i)),
-      IETEST = "Inclusion Criteria",
-      IECAT = iecat,
-      IESCAT = iescat,
-      IEORRES = inclusion_criteria[[i]]$text,
+      IETESTCD = paste0("INCL", sprintf("%02d", i)),
+      IETEST = if(is.character(criterion)) criterion else criterion$text,
+      IECAT = "INCLUSION",
+      IESCAT = if(is.list(criterion) && !is.null(criterion$subsection)) criterion$subsection else "",
+      TIRL = "",
+      TIVERS = tivers,
       stringsAsFactors = FALSE
     ))
   }
   
+  # Add exclusion criteria
   for (i in seq_along(exclusion_criteria)) {
-    iescat <- if(!is.null(exclusion_criteria[[i]]$subsection)) exclusion_criteria[[i]]$subsection else ""
-    iecat <- if(iescat != "") "Exclusion" else ""
-    
+    criterion <- exclusion_criteria[[i]]
     ti_domain <- rbind(ti_domain, data.frame(
       STUDYID = study_id,
       DOMAIN = "TI",
-      IETESTCD = paste0("EXCL", sprintf("%03d", i)),
-      IETEST = "Exclusion Criteria",
-      IECAT = iecat,
-      IESCAT = iescat,
-      IEORRES = exclusion_criteria[[i]]$text,
+      IETESTCD = paste0("EXCL", sprintf("%02d", i)),
+      IETEST = if(is.character(criterion)) criterion else criterion$text,
+      IECAT = "EXCLUSION",
+      IESCAT = if(is.list(criterion) && !is.null(criterion$subsection)) criterion$subsection else "",
+      TIRL = "",
+      TIVERS = tivers,
       stringsAsFactors = FALSE
     ))
   }
@@ -839,9 +899,10 @@ generate_ti_domain <- function(study_id, inclusion_criteria, exclusion_criteria,
   
   return(ti_domain)
 }
+
 #' Save TI Domain to Excel
 #'
-#' This function saves the TI domain data frame to an Excel file with proper formatting.
+#' This function saves the TI domain data frame to an Excel file with proper formatting and UTF-8 encoding.
 #'
 #' @param ti_domain A data frame containing the TI domain data.
 #' @param study_id A character string representing the Study ID.
@@ -858,6 +919,19 @@ save_to_excel <- function(ti_domain, study_id, output_dir, debug = FALSE) {
   
   # Add a worksheet
   openxlsx::addWorksheet(wb, "TI")
+  
+  # Trim leading and trailing whitespace from all character columns
+  ti_domain[] <- lapply(ti_domain, function(x) if(is.character(x)) trimws(x) else x)
+  
+  # Ensure all character columns are encoded as UTF-8
+  ti_domain[] <- lapply(ti_domain, function(x) {
+    if(is.character(x)) {
+      Encoding(x) <- "UTF-8"
+      return(x)
+    } else {
+      return(x)
+    }
+  })
   
   # Write the data to the worksheet
   openxlsx::writeData(wb, "TI", ti_domain)
@@ -939,9 +1013,15 @@ prepare_summary <- function(result, excel_file, debug = FALSE) {
   summary <- list(
     num_inclusion = length(result$inclusion),
     num_exclusion = length(result$exclusion),
-    first_inclusion = if(length(result$inclusion) > 0) result$inclusion[[1]]$text else "No inclusion criteria found",
-    first_exclusion = if(length(result$exclusion) > 0) result$exclusion[[1]]$text else "No exclusion criteria found",
-    inclusion_lines = paste(sapply(result$inclusion[1:min(10, length(result$inclusion))], function(x) x$text), collapse = "\n"),
+    first_inclusion = if(length(result$inclusion) > 0) {
+      if(is.list(result$inclusion[[1]])) result$inclusion[[1]]$text else result$inclusion[[1]]
+    } else "No inclusion criteria found",
+    first_exclusion = if(length(result$exclusion) > 0) {
+      if(is.list(result$exclusion[[1]])) result$exclusion[[1]]$text else result$exclusion[[1]]
+    } else "No exclusion criteria found",
+    inclusion_lines = paste(sapply(result$inclusion[1:min(10, length(result$inclusion))], function(x) {
+      if(is.list(x)) x$text else x
+    }), collapse = "\n"),
     output_location = excel_file
   )
   
@@ -1128,7 +1208,7 @@ identify_and_extract_criteria <- function(pdf_path, page_range, start_section, e
 #' @keywords internal
 clean_criterion_text <- function(text, max_length = 200, debug = FALSE) {
   # Remove section numbers
-  text <- gsub("^\\s*\\d+(\\.\\d+)*\\s+", "", text)
+  text <- gsub("^\\s*(\\d+\\.?|[a-z]\\.?|\\*|\\-|•)\\s*", "", text)
   
   # Remove any leading/trailing whitespace
   text <- trimws(text)

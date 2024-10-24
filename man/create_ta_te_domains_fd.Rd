@@ -8,8 +8,6 @@ create_ta_te_domains_fd(
   study_id,
   trial_design,
   arms_data,
-  treatments,
-  te_rules,
   output_dir = getwd()
 )
 }
@@ -18,11 +16,7 @@ create_ta_te_domains_fd(
 
 \item{trial_design}{A character string representing the trial design. Should be "FACTORIAL DESIGN".}
 
-\item{arms_data}{A list of arm data. Each element in the list should be a list containing \code{armcd} and \code{epochs}.}
-
-\item{treatments}{A list of treatments for the trial.}
-
-\item{te_rules}{A data frame containing TE rules with columns: ELEMENT, TESTRL, TEENRL, TEDUR.}
+\item{arms_data}{A list of arm data. Each element in the list should be a list containing \code{armcd}, \code{arm}, \code{epochs}, \code{etcd}, \code{elements}, \code{testrl}, \code{teenrl}, and \code{tedur}.}
 
 \item{output_dir}{A character string representing the output directory. Defaults to the current working directory.}
 }
@@ -34,6 +28,52 @@ This function generates the TA (Trial Arms) and TE (Trial Elements) datasets
 for a given study ID based on the FACTORIAL DESIGN.
 }
 \examples{
-\dontrun{
-}
+study_id <- "FDXXX"
+trial_design <- "FACTORIAL DESIGN"
+arms_data <- list(
+  list(
+    armcd = "A1B1",
+    arm = "Factor A Level 1 + Factor B Level 1",
+    epochs = "SCREENING,TREATMENT,FOLLOW-UP",
+    etcd = "SCRN,TRT,F/U",
+    elements = "Screening,Treatment A1B1,Follow-up",
+    testrl = "Informed consent,First dose of A1B1 treatment,Last dose of study treatment",
+    teenrl = "Randomization,Last dose of A1B1 treatment or disease progression,30 days after last dose",
+    tedur = "P28D,P12W,P30D"
+  ),
+  list(
+    armcd = "A1B2",
+    arm = "Factor A Level 1 + Factor B Level 2",
+    epochs = "SCREENING,TREATMENT,FOLLOW-UP",
+    etcd = "SCRN,TRT,F/U",
+    elements = "Screening,Treatment A1B2,Follow-up",
+    testrl = "Informed consent,First dose of A1B2 treatment,Last dose of study treatment",
+    teenrl = "Randomization,Last dose of A1B2 treatment or disease progression,30 days after last dose",
+    tedur = "P28D,P12W,P30D"
+  ),
+  list(
+    armcd = "A2B1",
+    arm = "Factor A Level 2 + Factor B Level 1",
+    epochs = "SCREENING,TREATMENT,FOLLOW-UP",
+    etcd = "SCRN,TRT,F/U",
+    elements = "Screening,Treatment A2B1,Follow-up",
+    testrl = "Informed consent,First dose of A2B1 treatment,Last dose of study treatment",
+    teenrl = "Randomization,Last dose of A2B1 treatment or disease progression,30 days after last dose",
+    tedur = "P28D,P12W,P30D"
+  ),
+  list(
+    armcd = "A2B2",
+    arm = "Factor A Level 2 + Factor B Level 2",
+    epochs = "SCREENING,TREATMENT,FOLLOW-UP",
+    etcd = "SCRN,TRT,F/U",
+    elements = "Screening,Treatment A2B2,Follow-up",
+    testrl = "Informed consent,First dose of A2B2 treatment,Last dose of study treatment",
+    teenrl = "Randomization,Last dose of A2B2 treatment or disease progression,30 days after last dose",
+    tedur = "P28D,P12W,P30D"
+  )
+)
+
+result <- create_ta_te_domains_fd(study_id, trial_design, arms_data)
+FDXXX_TA <- result$TA
+FDXXX_TE <- result$TE
 }

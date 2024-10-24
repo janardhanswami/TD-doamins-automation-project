@@ -6,20 +6,17 @@
 \usage{
 create_ta_te_domains_sd(
   study_id,
+  trial_design,
   arms_data,
-  treatments,
-  te_rules,
   output_dir = getwd()
 )
 }
 \arguments{
 \item{study_id}{A character string representing the Study ID.}
 
-\item{arms_data}{A list of arm data. Each element in the list should be a list containing \code{armcd} and \code{epochs}.}
+\item{trial_design}{A character string representing the trial design. Should be "SINGLE GROUP DESIGN".}
 
-\item{treatments}{A list of treatments for the trial.}
-
-\item{te_rules}{A data frame containing TE rules with columns: ELEMENT, TESTRL, TEENRL, TEDUR.}
+\item{arms_data}{A list containing a single arm data. The arm data should be a list containing \code{armcd}, \code{arm}, \code{epochs}, \code{etcd}, \code{elements}, \code{testrl}, \code{teenrl}, and \code{tedur}.}
 
 \item{output_dir}{A character string representing the output directory. Defaults to the current working directory.}
 }
@@ -31,26 +28,23 @@ This function generates the TA (Trial Arms) and TE (Trial Elements) datasets
 for a given study ID based on the SINGLE GROUP DESIGN.
 }
 \examples{
-\dontrun{
-study_id <- "STUDY001"
+# Example: Dose Escalation Study
+study_id <- "SGDE001"
+trial_design <- "SINGLE GROUP DESIGN"
 arms_data <- list(
   list(
-    armcd = "ARM1",
-    epochs = "Screening,Treatment,Treatment,Treatment,Follow-Up"
+    armcd = "DOSE_ESC",
+    arm = "Dose Escalation Arm",
+    epochs = "SCREENING,TREATMENT_1,TREATMENT_2,TREATMENT_3,FOLLOW-UP",
+    etcd = "SCRN,TRT1,TRT2,TRT3,F/U",
+    elements = "Screening,Treatment Dose Level 1,Treatment Dose Level 2,Treatment Dose Level 3,Follow-up",
+    testrl = "Informed consent,First dose of Dose Level 1,First dose of Dose Level 2,First dose of Dose Level 3,Last dose of study treatment",
+    teenrl = "First dose of Dose Level 1,Last dose of Dose Level 1 or dose-limiting toxicity,Last dose of Dose Level 2 or dose-limiting toxicity,Last dose of Dose Level 3 or dose-limiting toxicity,30 days after last dose or resolution of all toxicities",
+    tedur = "P28D,P14D,P14D,P14D,P30D"
   )
 )
-treatments <- list("A", "B", "C") # Define the treatments dynamically as a list
-te_rules <- data.frame(
-  ELEMENT = c("SCREENING", "TREATMENT A", "TREATMENT B", "TREATMENT C", "FOLLOW-UP"),
-  TESTRL = c("Informed consent", "First dose of study drug A", "First dose of study drug B",
-             "First dose of study drug C", "End of treatment"),
-  TEENRL = c("End of screening", "End of treatment A", "End of treatment B",
-             "End of treatment C", "End of follow-up period"),
-  TEDUR = c("P7D", "P14D", "P14D", "P14D", "P21D")
-)
 
-result <- create_ta_te_domains_sd(study_id, arms_data, treatments, te_rules)
-print(result$TA)
-print(result$TE)
-}
+result <- create_ta_te_domains_sd(study_id, trial_design, arms_data)
+SGDE001_TA <- result$TA
+SGDE001_TE <- result$TE
 }
